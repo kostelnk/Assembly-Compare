@@ -108,14 +108,48 @@ quality_clean <- quality_all %>%
 headers_clean <- headers_all %>%
   mutate(contig_id = str_trim(contig_id))
 
-# 3. Finální spojení (Headers + Quality)
-final_data <- headers_all %>%
-  left_join(quality_all, by = "contig_id")
-
-# KONTROLA: Měla bys vidět sloupce: contig_id, length, coverage, completeness...
+# KONTROLA:
 final_data %>% 
   filter(!is.na(Completeness)) %>% 
   head()
+
+```
+
+```{r}
+#| label: taxonomy
+
+# 1. Načtení GTDBtk taxonomie
+
+tax_bac <- read_tsv("results/gtdbtk/myloasm/classify/gtdbtk.bac120.summary.tsv", show_col_types = FALSE) %>% 
+  select(user_genome, classification)
+  
+tax_ar <- read_tsv("results/gtdbtk/myloasm/classify/gtdbtk.ar53.summary.tsv", show_col_types = FALSE) %>% 
+  select(user_genome, classification)
+
+
+# 2. Spojíme bakterie a archea do jedné tabulky a vyčistíme data
+taxonomy_clean <- bind_rows(tax_bac, tax_ar) %>%
+  rename(contig_id = user_genome) %>%
+  # Extrakce Phylum: hledáme text mezi "p__" a středníkem
+  mutate(phylum = str_extract(classification, "(?<=p__)[^;]+")) %>%
+  # Volitelné: odstranění "Unclassified" pokud to zadání vyžaduje přísně
+  filter(!is.na(phylum))
+
+# KONTROLA
+head(taxonomy_clean)
+```
+
+```{r}
+# --- FINÁLNÍ SPOJENÍ ---
+
+final_data <- headers_clean %>%
+  # Připojíme kvalitu z CheckM2
+  left_join(quality_clean, by = "contig_id") %>%
+  # Připojíme taxonomii z GTDBtk 
+  left_join(taxonomy_clean, by = "contig_id")
+
+# Kontrola výsledku - měli bychom vidět sloupec 'phylum'
+glimpse(final_data)
 ```
 
 # 2. Výsledky a Vizualizace
