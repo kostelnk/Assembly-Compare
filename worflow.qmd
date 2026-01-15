@@ -1,0 +1,196 @@
+---
+title: "Metagenomic Assemblers Comparison"
+author: "Tvoje Jméno"
+format: gfm
+editor: visual
+---
+
+# Úvod
+
+\[cite_start\]Zde napíšu stručný úvod, co je cílem práce (porovnat metaMDBG a myloasm)\[cite: 9, 66\].
+
+# 1. Příprava dat
+
+V této části načítám potřebné knihovny a data.
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+library(tidyverse)
+theme_set(theme_minimal())
+```
+
+## Načtení a čištění dat
+
+Zde vložím kód pro parsování hlaviček a načtení tabulek (Krok 3, 4 a 5 z mého předchozího návodu).
+
+### Myloasm 
+
+```{r}
+#| label: load-myloasm
+
+# 1. Načteme surový text
+raw_myloasm <- read_lines("results/myloasm_assembly_headers.txt")
+
+# 2. Vytáhneme data
+headers_myloasm <- tibble(raw = raw_myloasm) %>%
+  extract(
+    col = raw,
+    into = c("contig_id", "length", "circ_status", "coverage"),
+    # Regex hledá vzory jako "_len-" nebo "_depth-"
+    regex = ">([^_]+)_len-([0-9]+)_circular-([a-z]+)_depth-([0-9.]+)",
+    convert = TRUE
+  ) %>%
+  mutate(
+    assembler = "myloasm",
+    #"possible" = circular
+    is_circular = if_else(circ_status %in% c("yes", "possible"), TRUE, FALSE)
+  ) %>%
+  select(contig_id, assembler, length, coverage, is_circular)
+
+# KONTROLA
+head(headers_myloasm)
+```
+
+### MetaMDBG
+
+```{r}
+#| label: load-metamdbg
+
+# 1. Načteme surový text
+raw_metamdbg <- read_lines("results/metamdbg_assembly_headers.txt")
+
+# 2. Vytáhneme data 
+headers_metamdbg <- tibble(raw = raw_metamdbg) %>%
+  mutate(
+    # Najde ID (první slovo po >)
+    contig_id = str_extract(raw, "(?<=^>)\\S+"),
+    # Najde číslo za "len="
+    length = str_extract(raw, "(?<=length=)[0-9]+") %>% as.numeric(),
+    # Najde číslo za "depth="
+    coverage = str_extract(raw, "(?<=coverage=)[0-9.]+") %>% as.numeric(),
+    # Pokud tam je "circular=yes", dá TRUE
+    is_circular = str_detect(raw, "circular=yes"),
+    assembler = "metamdbg"
+  ) %>%
+  select(contig_id, assembler, length, coverage, is_circular)
+
+# KONTROLA
+head(headers_metamdbg)
+```
+
+### Spojení hlaviček a načtení kvality
+
+```{r}
+#| label: merge-quality
+
+# 1. Spojíme hlavičky pod sebe
+headers_all <- bind_rows(headers_myloasm, headers_metamdbg)
+
+# 2. Načteme CheckM2 reporty (kvalitu)
+qual_myloasm <- read_tsv("results/checkm2/myloasm/quality_report_myloasm.tsv", show_col_types = FALSE) %>%
+  select(Name, Completeness, Contamination) %>%
+  rename(contig_id = Name) # Přejmenujeme, aby to sedělo s hlavičkami
+
+qual_metamdbg <- read_tsv("results/checkm2/metamdbg/quality_report.tsv", show_col_types = FALSE) %>%
+  select(Name, Completeness, Contamination) %>%
+  rename(contig_id = Name)
+
+quality_all <- bind_rows(qual_myloasm, qual_metamdbg)
+# 3. Očištění kvality (CheckM2)
+# Zkusíme z Name odstranit přípony, aby zůstalo jen čisté ID contigu
+quality_clean <- quality_all %>%
+  mutate(contig_id = str_replace(contig_id, "\\.fasta.*", "")) %>% # Odstraní .fasta a vše za ním
+  mutate(contig_id = str_replace(contig_id, "_[0-9]+$", ""))     # Odstraní případné číslo na konci
+
+headers_clean <- headers_all %>%
+  mutate(contig_id = str_trim(contig_id))
+
+# 3. Finální spojení (Headers + Quality)
+final_data <- headers_all %>%
+  left_join(quality_all, by = "contig_id")
+
+# KONTROLA: Měla bys vidět sloupce: contig_id, length, coverage, completeness...
+final_data %>% 
+  filter(!is.na(Completeness)) %>% 
+  head()
+```
+
+# 2. Výsledky a Vizualizace
+
+## Distribuce délky contigů
+
+```{r}
+#| label: quality-categorization
+
+final_data <- final_data %>%
+  mutate(quality_cat = case_when(
+    Completeness > 90 & Contamination < 5 ~ "High",
+    Completeness > 50 & Contamination < 10 ~ "Medium",
+    TRUE ~ "Low"
+  ))
+
+# Rychlé ověření, kolik jich máme v každé kategorii
+table(final_data$assembler, final_data$quality_cat)
+```
+
+Podíváme se, jak dlouhé contigy jednotlivé assemblery vytvořily
+
+```{r}
+#| label: plot-length
+
+final_data %>%
+  ggplot(aes(x = length, fill = is_circular)) +
+  geom_histogram(bins = 50, color = "black", alpha = 0.7) +
+  scale_x_log10(labels = scales::comma) + # Logaritmická osa X
+  facet_wrap(~assembler, ncol = 1) +
+  labs(title = "Distribution of contig lenght",
+       x = "Lenght (bp, log scale)", y = "Number", fill = "Circular")
+
+final_data %>%
+  ggplot(aes(x = length, y = coverage, color = assembler)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10(labels = scales::comma) +
+  scale_y_log10() +
+  labs(title = "Corelation of lenght and coverage",
+       x = "Lenght (bp)", y = "Coverage")
+```
+
+## Kvalita MAGs
+
+Zajímá nás kvalita velkých cirkulárních contigů.
+
+```{r}
+#| label: plot-quality
+
+large_circular <- final_data %>%
+  filter(length > 500000, is_circular == TRUE)
+
+large_circular %>%
+  ggplot(aes(x = Contamination, y = Completeness)) +
+  geom_point(size = 3) +
+  facet_wrap(~assembler) +
+  # Referenční čáry pro High Quality (90% completeness, 5% contamination)
+  geom_hline(yintercept = 90, linetype = "dashed") +
+  geom_vline(xintercept = 5, linetype = "dashed") +
+  labs(title = "Kvalita velkých cirkulárních MAGs (>500kb)",
+       x = "Kontaminace (%)", y = "Kompletnost (%)")
+
+
+
+large_circular %>%
+  filter(!is.na()) %>% # Zahodíme ty bez taxonomie
+  count(assembler, phylum, quality_category) %>%
+  ggplot(aes(x = phylum, y = n, fill = quality_category)) +
+  geom_col() +
+  coord_flip() + # Otočíme graf naležato, aby se texty četly lépe
+  facet_wrap(~assembler) +
+  labs(title = "Počet MAGs podle kmene",
+       x = "Phylum", y = "Počet")
+```
+
+# Závěr
+
+\[cite_start\]Zde napíšu, který assembler dopadl lépe\[cite: 71\].
