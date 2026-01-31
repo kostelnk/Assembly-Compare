@@ -1,5 +1,5 @@
 # Metagenomic Assemblers Comparison
-Tvoje Jméno
+Klára Kostelníková
 
 # Úvod
 
@@ -10,9 +10,11 @@ horkého pramene (hot spring).
 
 Analýza se zaměřuje na vyhodnocení kvality sestavených genomů bez
 nutnosti spouštět samotné skládání nebo mapování. Využíváme textová
-metadata získaná z: 1. **Hlaviček contigů** (délka, pokrytí,
-cirkularita). 2. **CheckM2** (odhad kompletnosti a kontaminace). 3.
-**GTDBtk** (taxonomická klasifikace).
+metadata získaná z:
+
+1.  **Hlaviček contigů** (délka, pokrytí, cirkularita).
+2.  **CheckM2** (odhad kompletnosti a kontaminace).
+3.  **GTDBtk** (taxonomická klasifikace).
 
 Celé zpracování dat, vizualizace výsledků a finální vyhodnocení je
 provedeno v prostředí **R** s využitím balíčků **tidyverse**. Hlavním
@@ -137,29 +139,36 @@ Načtení taxonomie z GTDBtk
 ``` r
 # 1. Načtení GTDBtk taxonomie
 
-tax_bac_myolasm <- read_tsv("results/gtdbtk/myloasm/classify/gtdbtk.bac120.summary.tsv", show_col_types = FALSE) %>% 
+tax_bac_ <- read_tsv("results/gtdbtk/myloasm/classify/gtdbtk.bac120.summary.tsv", show_col_types = FALSE) %>% 
   select(user_genome, classification)
 
 tax_bac_metamdbg <- read_tsv("results/gtdbtk/metamdbg/classify/gtdbtk.bac120.summary.tsv", show_col_types = FALSE) %>% 
   select(user_genome, classification)
 
-tax_bac <- bind_rows(tax_bac_metamdbg, tax_bac_myolasm)
+tax_bac <- bind_rows(tax_bac_metamdbg, tax_bac_)
   
-tax_ar_myolasm <- read_tsv("results/gtdbtk/myloasm/classify/gtdbtk.ar53.summary.tsv", show_col_types = FALSE) %>% 
+tax_ar_ <- read_tsv("results/gtdbtk/myloasm/classify/gtdbtk.ar53.summary.tsv", show_col_types = FALSE) %>% 
   select(user_genome, classification)
 
 tax_ar_metamdbg <- read_tsv("results/gtdbtk/metamdbg/classify/gtdbtk.ar53.summary.tsv", show_col_types = FALSE) %>% 
   select(user_genome, classification)
 
-tax_ar <- bind_rows(tax_ar_metamdbg, tax_ar_myolasm)
+tax_ar <- bind_rows(tax_ar_metamdbg, tax_ar_)
 
-# 2. Spojíme bakterie a archea do jedné tabulky a vyčistíme data
+# 2. Spojíme bakterie a archea do jedné tabulky a rozdělíme klasifikaci
 taxonomy_all <- bind_rows(tax_bac, tax_ar) %>%
   rename(contig_id = user_genome) %>%
-  # Extrakce Phylum: hledáme text mezi "p__" a středníkem
-  mutate(phylum = str_extract(classification, "(?<=p__)[^;]+")) %>%
-  # Volitelné: odstranění "Unclassified" 
-  filter(!is.na(phylum))
+  # Rozdělíme sloupec 'classification' na 7 nových sloupců podle středníku
+  separate(
+    classification, 
+    into = c("domain", "phylum", "class", "order", "family", "genus", "species"), 
+    sep = ";", 
+    fill = "right"
+  ) %>%
+  # Odstraníme prefixy (např. "p__", "c__") ze všech nově vytvořených sloupců
+  mutate(across(c(domain:species), ~ str_remove(., "^[a-z]__"))) %>%
+  # Odstranění řádků, kde chybí phylum 
+  filter(!is.na(phylum) & phylum != "")
 ```
 
 spojení dat
@@ -209,16 +218,21 @@ glimpse(final_data)
 ```
 
     Rows: 130
-    Columns: 9
-    $ contig_id      <chr> "u1859167ctg", "u3662534ctg", "u3457852ctg", "u1614917c…
-    $ assembler      <chr> "myloasm", "myloasm", "myloasm", "myloasm", "myloasm", …
-    $ length         <dbl> 2142282, 1109361, 1142602, 1752029, 1032745, 519055, 65…
-    $ coverage       <dbl> 10, 5, 164, 30, 6, 6, 7, 7, 6, 7, 11, 6, 7, 7, 10, 7, 6…
-    $ is_circular    <lgl> FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,…
-    $ Completeness   <dbl> 99.67, 43.81, 96.70, 81.74, 99.97, 15.23, 56.08, 50.78,…
-    $ Contamination  <dbl> 0.66, 0.07, 0.00, 4.75, 0.22, 0.01, 0.01, 0.60, 0.00, 1…
-    $ classification <chr> "d__Bacteria;p__UBA6262;c__UBA6262;o__UBA6262;f__UBA626…
-    $ phylum         <chr> "UBA6262", "Nitrospirota", "Nanobdellota", "Firestoneba…
+    Columns: 14
+    $ contig_id     <chr> "u1859167ctg", "u3662534ctg", "u3457852ctg", "u1614917ct…
+    $ assembler     <chr> "myloasm", "myloasm", "myloasm", "myloasm", "myloasm", "…
+    $ length        <dbl> 2142282, 1109361, 1142602, 1752029, 1032745, 519055, 652…
+    $ coverage      <dbl> 10, 5, 164, 30, 6, 6, 7, 7, 6, 7, 11, 6, 7, 7, 10, 7, 6,…
+    $ is_circular   <lgl> FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, …
+    $ Completeness  <dbl> 99.67, 43.81, 96.70, 81.74, 99.97, 15.23, 56.08, 50.78, …
+    $ Contamination <dbl> 0.66, 0.07, 0.00, 4.75, 0.22, 0.01, 0.01, 0.60, 0.00, 1.…
+    $ domain        <chr> "Bacteria", "Bacteria", "Archaea", "Bacteria", "Bacteria…
+    $ phylum        <chr> "UBA6262", "Nitrospirota", "Nanobdellota", "Firestonebac…
+    $ class         <chr> "UBA6262", "Thermodesulfovibrionia", "Nanobdellia", "", …
+    $ order         <chr> "UBA6262", "Thermodesulfovibrionales", "Woesearchaeales"…
+    $ family        <chr> "UBA6262", "SM23-35", "JACPBV01", "", "GCA-002772895", "…
+    $ genus         <chr> "UBA6262", "JBFMAM01", "", "", "", "JACPQH01", "JBFLZU01…
+    $ species       <chr> "", "", "", "", "", "", "JBFLZU01 sp040756155", "", "", …
 
 # 2. Výsledky a Vizualizace
 
@@ -241,7 +255,14 @@ table(final_data$assembler, final_data$quality_cat)
       metamdbg   34   6      2
       myloasm    63  14     11
 
-Podíváme se, jak dlouhé contigy jednotlivé assemblery vytvořily
+**Korelace délky a pokrytí:** Z bodového grafu (scatter plot) je patrné,
+že většina cirkulárních contigů se nachází v oblasti středního až
+vysokého pokrytí. U assembleru **myloasm** vidíme, že dokázal
+zrekonstruovat dlouhé contigy i při nižším pokrytí, zatímco **metaMDBG**
+vyžadoval pro stabilní sestavení dlouhých sekvencí spíše vyšší hloubku
+čtení. Lineární trend zde není striktní, což naznačuje, že délka
+sestaveného genomu (MAG) v tomto vzorku nezávisí pouze na množství dat,
+ale i na komplexitě daného organismu
 
 ``` r
 final_data %>%
@@ -256,13 +277,17 @@ final_data %>%
 ![](worflow_files/figure-commonmark/plot-length-1.png)
 
 ``` r
+# Boxplot pro srovnání délek
 final_data %>%
-  ggplot(aes(x = length, y = coverage, color = assembler)) +
-  geom_point(alpha = 0.5) +
-  scale_x_log10(labels = scales::comma) +
-  scale_y_log10() +
-  labs(title = "Corelation of lenght and coverage",
-       x = "Lenght (bp)", y = "Coverage")
+  ggplot(aes(x = assembler, y = length, fill = is_circular)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_y_log10(labels = scales::comma) +
+  labs(title = "Contig Length Distribution by Assembler",
+       subtitle = "Comparison of circular vs. non-circular contigs (log scale)",
+       x = "Assembler",
+       y = "Contig Length (bp)",
+       fill = "Circular") +
+  theme_minimal()
 ```
 
 ![](worflow_files/figure-commonmark/plot-length-2.png)
@@ -272,61 +297,75 @@ final_data %>%
 Zajímá nás kvalita velkých cirkulárních contigů.
 
 ``` r
+# Vytvoření výběru 
 large_circular <- final_data %>%
   filter(length > 500000, is_circular == TRUE)
 
+
+# Number of MAGs per phylum colored by quality category
 large_circular %>%
-  ggplot(aes(x = Contamination, y = Completeness)) +
-  geom_point(size = 3) +
+  filter(!is.na(phylum)) %>% 
+  count(assembler, phylum, quality_cat) %>% 
+  ggplot(aes(x = phylum, y = n, fill = quality_cat)) + 
+  geom_col() +
+  coord_flip() + 
   facet_wrap(~assembler) +
-  # Referenční čáry pro High Quality (90% completeness, 5% contamination)
-  geom_hline(yintercept = 90, linetype = "dashed") +
-  geom_vline(xintercept = 5, linetype = "dashed") +
-  labs(title = "Kvalita velkých cirkulárních MAGs (>500kb)",
-       x = "Kontaminace (%)", y = "Kompletnost (%)")
+  scale_fill_manual(values = c("High" = "#2ca25f", "Medium" = "#feb24c", "Low" = "#de2d26")) +
+  labs(title = "Number of Large Circular MAGs per Phylum",
+       subtitle = "Contigs > 500 kb categorized by quality",
+       x = "Phylum", 
+       y = "Count", 
+       fill = "Quality") +
+  theme_minimal()
 ```
 
 ![](worflow_files/figure-commonmark/plot-quality-1.png)
 
 ``` r
+# Bodový graf kvality s referenčními čarami a popisky
 large_circular %>%
-  filter(!is.na(phylum)) %>% # Opravený filtr
-  count(assembler, phylum, quality_cat) %>% # Opravený název quality_cat
-  ggplot(aes(x = phylum, y = n, fill = quality_cat)) + # Opravený název quality_cat
-  geom_col() +
-  coord_flip() + 
+  ggplot(aes(x = Contamination, y = Completeness, color = quality_cat)) +
+  geom_point(size = 3, alpha = 0.8) +
   facet_wrap(~assembler) +
-  labs(title = "Počet MAGs podle kmene",
-       x = "Phylum", y = "Počet", fill = "Kvalita")
+  # Referenční čáry pro High Quality (90% completeness, 5% contamination)
+  geom_hline(yintercept = 90, linetype = "dashed", color = "grey40") +
+  geom_vline(xintercept = 5, linetype = "dashed", color = "grey40") +
+  # Nastavení barev pro kategorie
+  scale_color_manual(values = c("High" = "#2ca25f", "Medium" = "#feb24c", "Low" = "#de2d26")) +
+ labs(title = "Completeness and Contamination of Large MAGs",
+       subtitle = "Circular contigs > 500 kb; Dashed lines indicate High Quality thresholds",
+       x = "Contamination (%)", 
+       y = "Completeness (%)",
+       color = "Quality Category") +
+  theme_minimal()
 ```
 
 ![](worflow_files/figure-commonmark/plot-quality-2.png)
 
 # Závěr
 
-V této práci jsme porovnali výsledky assemblerů **metaMDBG** a
-**myloasm** na základě strukturálních a kvalitativních metrik.
+V této práci jsme porovnali výkon assemblerů **metaMDBG** a **myloasm**
+při zpracování nanopore dat z horkého pramene.
 
-**Distribuce délek a pokrytí:** Z histogramů délek contigů je patrné, že
-assembler **myloasm** produkoval obecně delší contigy. Při pohledu na
-korelaci délky a pokrytí (coverage) jsme pozorovali, že **\[DOPLŇ CO
-VIDÍŠ: např. delší contigy mají zpravidla vyšší pokrytí / není zde jasná
-korelace\]**.
+- **Strukturální integrita:** Assembler **myloasm** vykazuje vyšší
+  efektivitu v rekonstrukci dlouhých sekvencí, což dokládá distribuce
+  délek contigů. Významným rozdílem je schopnost identifikovat “possible
+  circular” contigy, které po filtraci nad 500 kbp poskytují ucelenější
+  pohled na genomickou informaci.
 
-**Kvalita velkých cirkulárních MAGs:** Nejdůležitějším kritériem byla
-rekonstrukce velkých (\> 500 kbp) cirkulárních contigů. \* Assembler
-**myolasm** dokázal sestavit větší počet těchto contigů. \* Při
-hodnocení kvality (CheckM2) se ukázalo, že většina cirkulárních contigů
-z obou assembleru spadá do kategorie “High Quality” (\>90 % kompletnost,
-\<5 % kontaminace). \*
+- **Kvalita MAGs:** Dle kritérií CheckM2 oba nástroje generují primárně
+  vysoce kvalitní genomy (\>90 % kompletnost, \<5 % kontaminace).
+  Nicméně **myloasm** doručil vyšší absolutní počet těchto vysoce
+  kvalitních (High Quality) cirkulárních MAGs.
 
-**Taxonomický pohled:** Taxonomická klasifikace pomocí GTDBtk ukázala,
-že identifikované MAGs patří především do kmenů (Phylum)
-**Patescibacteriota**. Assembler **myolasm** se jevil jako úspěšnější v
-zachycení taxonomické diverzity, jelikož pokryl více kmenů / získal více
-MAGs v klíčových skupinách.
+- **Taxonomická reprezentace:** Analýza pomocí GTDB-Tk odhalila
+  dominantní zastoupení kmene **Patescibacteriota**. **Myloasm** úspěšně
+  zrekonstruoval širší spektrum zástupců, což naznačuje jeho lepší
+  citlivost k méně zastoupeným nebo specifickým taxonomickým skupinám v
+  daném prostředí.
 
-**Celkové zhodnocení:** Na základě provedené analýzy lze konstatovat, že
-pro tento typ dat z horkého pramene se jeví jako vhodnější nástroj
-**myloasm**, protože dokázal rekonstruovat více vysoce kvalitních a
-kompletních genomů.
+  **Celkové zhodnocení:** Na základě počtu a kvality zrekonstruovaných
+  velkých cirkulárních contigů lze konstatovat, že pro analýzu tohoto
+  mikrobiálního společenstva je vhodnějším nástrojem **myloasm**.
+  Poskytuje robustnější výsledky pro následné metabolické a funkční
+  analýzy
